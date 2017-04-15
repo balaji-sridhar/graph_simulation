@@ -133,5 +133,5 @@ def load_node_properties():
 
 if __name__ == "__main__":
     log.basicConfig(level=log.INFO)
-    load_standford_graph("Cit-HepPh.txt")
+    load_standford_graph("NodeConnections.txt")
     create_graph_organically(9450)
