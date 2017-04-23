@@ -7,6 +7,7 @@
 ######
 
 import networkx as nx
+import os
 import random
 import json
 import csv
@@ -42,8 +43,10 @@ def load_standford_graph(dataFile):
         G1.node[nodeset[0]]['references'] = G1.node[nodeset[0]]['references'] + 1
         G1.node[nodeset[1]]['cited_by'] = G1.node[nodeset[1]]['cited_by'] + 1
 
-    log.info("Number of nodes and edges in the graph are : %s , %s", G1.number_of_nodes(), G1.number_of_edges())
-    write_graph_in_json(G1, 'stanford_dataset.json')
+    log.info("Number of nodes and edges in stanford graph are : %s , %s", G1.number_of_nodes(), G1.number_of_edges())
+    # To restrict the performance impact in writing huge file to disk
+    if G1.number_of_nodes() < 1000:
+        write_graph_in_json(G1, 'stanford_dataset.json')
     return G1
 
 
@@ -57,7 +60,6 @@ def get_graph_properties(G):
     graph_wcc = nx.number_weakly_connected_components(G)
     graph_properties["wcc"] = graph_wcc
     log.debug("Graph WCC is: %s", graph_wcc)
-    # print("Value of the graph properties: ", graph_properties)
     # TODO: Update the graph properties, to cater the new simulation properties
     return graph_properties
 
@@ -73,7 +75,7 @@ def create_graph_organically(no_of_nodes):
             G2.add_node(i, node_props)
         else:
             add_nodes_in_timestep(G2, 1, 1, 0)
-    log.info("Number of nodes and edges in the graph  --- %s , %s", G2.number_of_nodes(), G2.number_of_edges())
+    log.info("Number of nodes and edges in the home brewed graph are :%s , %s", G2.number_of_nodes(), G2.number_of_edges())
 
     # Removing self loop in the graph
 
@@ -84,9 +86,8 @@ def create_graph_organically(no_of_nodes):
         print(iter[0])
         G2.remove_edge(iter[0], iter[0])
     log.debug("Aft: %s ", G2.edges())
-    write_graph_in_json(G2, 'node_link_data.json')
-    graph_properties = get_graph_properties(G2)
-    log.info("Value of the graph properties: %s ", graph_properties)
+    if G2.number_of_nodes() < 1000:
+        write_graph_in_json(G2, 'node_link_data.json')
     return G2
 
 
@@ -98,12 +99,13 @@ def print_simulation_metrics(G, filename):
     nodes_in_moderate_status = len(get_nodes_from_graph(G, 'popularity_level', 'moderate'))
     nodes_in_famous_status = len(get_nodes_from_graph(G, 'popularity_level', 'famous'))
     nodes_in_influential_status = len(get_nodes_from_graph(G, 'popularity_level', 'influential'))
-    if(filename != ""):
-        fd = open(filename, 'w+')
-        writer = csv.writer(fd)
+    if filename != "":
+        # Assume the file exist
+        output_file = open(filename, 'a', newline='')
+        writer = csv.writer(output_file)
         writer.writerow([total_no_of_nodes, nodes_in_new_status, nodes_in_moderate_status, nodes_in_famous_status,
-                 nodes_in_influential_status])
-        fd.close()
+                         nodes_in_influential_status])
+        output_file.close()
 
 
 def add_nodes_in_timestep(G, no_of_time_steps, with_edges, with_metrics, filename=""):
@@ -121,15 +123,22 @@ def add_nodes_in_timestep(G, no_of_time_steps, with_edges, with_metrics, filenam
     if with_metrics == 1:
         # Iterate over all the nodes and update the node status
         indegree_centralities = nx.in_degree_centrality(G)
+        # Normalizing the distribution
+        max_indegree_centrality =  max([i for i in indegree_centralities.values()])
+        log.debug("Maximum value of indegree centrality : %s" , max_indegree_centrality)
+
         for n, c in indegree_centralities.items():
+            normalized_node_centrality = c / max_indegree_centrality
+            log.debug("Actual centrality is %s Normalized centrality is %s" , c , normalized_node_centrality)
             # Check the centrality range and update the popularity state
-            if c > 0 and c <= 0.15:
+            if normalized_node_centrality > 0 and normalized_node_centrality <= 0.15:
                 G.node[n]["popularity_level"] = "moderate"
-            elif c > 0.15 and c <= 0.30:
+            elif normalized_node_centrality > 0.15 and normalized_node_centrality <= 0.30:
                 G.node[n]["popularity_level"] = "famous"
-            elif c > 0.30:
+            elif normalized_node_centrality > 0.30:
                 G.node[n]["popularity_level"] = "influential"
         print_simulation_metrics(G, filename)
+
 
 def write_graph_in_json(G, filename):
     # Writing generated graph to the file in json format
@@ -195,7 +204,7 @@ def add_citations_with_filter(G2, paper, no_of_nodes):
     k = random.randint(1, no_of_nodes)
     random_nodes = get_random_nodes(G2, k, filter)
     for reference in random_nodes:
-        if paper == reference | G2.has_edge(paper, reference) | G2.has_edge(reference, paper):
+        if paper == reference or G2.has_edge(paper, reference) or G2.has_edge(reference, paper):
             log.debug("No edge will be added as they exist between %s and %s ", paper, reference)
         else:
             G2.add_edges_from([(paper, reference)])
@@ -263,26 +272,47 @@ def generate_erdos_renyi_graph(n, p, seed=None):
             # print(e[0],e[1], e)
             # Updating the meta data, to keep count of number of in bound and outbound edges
             add_citations_with_filter(G, e[0], e[1])
-    write_graph_in_json(G, 'erdos_renyi.json')
+    if G.number_of_nodes() < 1000:
+        write_graph_in_json(G, 'erdos_renyi.json')
+    log.info("Number of nodes and edges in the  erdos renyi graph are :%s , %s", G.number_of_nodes(),
+             G.number_of_edges())
+
     return G
+
+
+def study_simulation_properties(G, time_steps, no_of_cycles, metrics_filename):
+    for i in range(0, no_of_cycles):
+        add_nodes_in_timestep(G, 50, 1, 1, metrics_filename)
+
+def initialize_csv_file(output_file_name):
+    # Create the file if exist, else clear down
+    output_file = open(output_file_name, 'w+', newline='')
+    writer = csv.writer(output_file)
+    # Writing header to the csv file
+    writer.writerow(['total_no_of_nodes', 'nodes_in_new_status', 'nodes_in_moderate_status', 'nodes_in_famous_status',
+                     'nodes_in_influential_status'])
 
 
 if __name__ == "__main__":
     log.basicConfig(level=log.INFO)
 
-    G = create_graph_organically(35)
-    # Update the time step parameter to scale the number of nodes to be processed
-    add_nodes_in_timestep(G, 10, 1, 0)
+    G = create_graph_organically(350)
     graph_properties = get_graph_properties(G)
-    log.info("Value of the home grown graph properties: %s ", graph_properties)
+    brewed_graph_metrics_file = 'brewed_sim_metrics.csv'
+    initialize_csv_file(brewed_graph_metrics_file)
+    study_simulation_properties(G, 50, 30, brewed_graph_metrics_file)
 
-    G1 = load_standford_graph("test.edgelist")
+    stanford_data_set = "test.edgelist"
+    stanford_metrics_file = 'stanford_sim_metrics.csv'
+    G1 = load_standford_graph(stanford_data_set)
     stanford_graph_properties = get_graph_properties(G1)
-    log.info("Value of the stanford graph properties: %s ", stanford_graph_properties)
 
-    G2 = generate_erdos_renyi_graph(100, 0.3)
-    gnm_graph_properties = get_graph_properties(G)
-    log.info("Value of the GNM  graph properties: %s ", gnm_graph_properties)
-    print(len(G2), nx.in_degree_centrality(G2))
-    add_nodes_in_timestep(G2, 50, 1, 1,'erdos_renyi_sim_metrics.csv')
-    add_nodes_in_timestep(G2, 50, 1, 1,'erdos_renyi_sim_metrics.csv')
+    initialize_csv_file(stanford_metrics_file)
+    study_simulation_properties(G1, 50, 30, stanford_metrics_file)
+
+    erdos_probability = 0.3
+    G2 = generate_erdos_renyi_graph(100, erdos_probability)
+    erdos_renyi_graph_properties = get_graph_properties(G2)
+    erdos_metrics_file = 'erdos_renyi_sim_metrics.csv'
+    initialize_csv_file(erdos_metrics_file)
+    study_simulation_properties(G2, 50, 30, erdos_metrics_file)
